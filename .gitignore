@@ -1,0 +1,36 @@
+# ── Keil 编译输出 ──
+MDK-ARM/healthy_project/
+MDK-ARM/DebugConfig/
+MDK-ARM/RTE/
+*.o
+*.d
+*.crf
+*.dep
+*.lnp
+*.axf
+*.hex
+*.bin
+*.map
+*.lst
+*.htm
+*.uvguix.*
+*.uvguix
+
+# ── CMSIS 中本工程未链接的预编译库与组件（体积大、未引用） ──
+Drivers/CMSIS/Lib/
+Drivers/CMSIS/DSP/
+Drivers/CMSIS/NN/
+Drivers/CMSIS/Core_A/
+Drivers/CMSIS/RTOS/
+Drivers/CMSIS/RTOS2/
+
+# ── 编辑备份与临时文件 ──
+*.bak
+*.bak.*
+*.orig
+hs_err_pid*.log
+*.log
+
+# ── 系统文件 ──
+Thumbs.db
+.DS_Store

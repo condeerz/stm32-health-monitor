@@ -18,7 +18,7 @@ HAL_StatusTypeDef ADXL345_Init(I2C_HandleTypeDef *hi2c)
     if (status != HAL_OK) return status;
 
     // 3. 配置数据格式寄存器（DATA_FORMAT）：±2g量程，全分辨率，右对齐
-    status = ADXL345_WriteReg(hi2c, DATA_FORMAT, 0x00);  // 0x00=±2g，13位分辨率
+    status = ADXL345_WriteReg(hi2c, DATA_FORMAT, 0x08);  // 0x08 = ±2g 全分辨率（FULL_RES=1，13 位）
     if (status != HAL_OK) return status;
 
     // 4. 配置带宽速率寄存器（BW_RATE）：100Hz采样率（0x0A=100Hz）
@@ -63,13 +63,13 @@ HAL_StatusTypeDef ADXL345_ReadAccel(I2C_HandleTypeDef *hi2c, short *ax, short *a
     return HAL_OK;
 }
 
-// 读取xyz数据存入均值滤波器，存满进行计算，滤波后样本存入sample
-void filter_calculate(filter_avg_t *filter, axis_info_t *sample)
+// 读取xyz数据存入均值滤波器，存满计算平均值（一次采样 = FILTER_CNT 次 I2C 读）
+static void filter_calculate(filter_avg_t *filter, axis_info_t *sample)
 {
 	uint8_t i;
 	short x_sum = 0, y_sum = 0, z_sum = 0;
-	
-	for (i = 0; i < FILTER_CNT; i++) 
+
+	for (i = 0; i < FILTER_CNT; i++)
 	{
 		ADXL345_ReadAccel(&hi2c2, &filter->info[i].x, &filter->info[i].y, &filter->info[i].z);
 		x_sum += filter->info[i].x;
@@ -81,86 +81,92 @@ void filter_calculate(filter_avg_t *filter, axis_info_t *sample)
 	sample->z = z_sum / FILTER_CNT;
 }
 
-//50个样本中找出最大最小值作为动态阈值
-//找出最大值和最小值
-void peak_update(peak_value_t *peak, axis_info_t *sample)
+/* 采样环形缓冲：每个任务周期只做一次 I2C 采样，峰值统计在缓冲上完成。
+   原实现在 peak_update 内部重复采样 SAMPLE_SIZE*FILTER_CNT 次（50*4 次 I2C 读），
+   100 kHz 总线上约 160 ms，导致计步任务的实际周期远大于设定的 20 ms。 */
+static axis_info_t s_sample_buf[SAMPLE_SIZE];
+static uint8_t      s_sample_idx = 0;
+static uint8_t      s_sample_cnt = 0;
+
+static void sample_buf_push(const axis_info_t *sample)
 {
-	int8_t i;
-	filter_avg_t filter;
-	short min_value = -32768;
-	short max_value = 32767;
-	peak->newmax.x = min_value;
-	peak->newmax.y = min_value;
-	peak->newmax.z = min_value;
-	
-	peak->newmin.x = max_value;
-	peak->newmin.y = max_value;
-	peak->newmin.z = max_value;
-	for (i = 0; i < SAMPLE_SIZE; i++) 
- {
-		filter_calculate(&filter,sample);
-		
-		peak->newmax.x = MAX(peak->newmax.x, sample->x);
-		peak->newmax.y = MAX(peak->newmax.y, sample->y);
-		peak->newmax.z = MAX(peak->newmax.z, sample->z);
-	
-		peak->newmin.x = MIN(peak->newmin.x, sample->x);
-		peak->newmin.y = MIN(peak->newmin.y, sample->y);
-		peak->newmin.z = MIN(peak->newmin.z, sample->z);
-	
-	}	
-	peak->oldmax.x = peak->newmax.x;
-	peak->oldmax.y = peak->newmax.y;
-	peak->oldmax.z = peak->newmax.z;
-	
-	peak->oldmin.x = peak->newmin.x;
-	peak->oldmin.y = peak->newmin.y;
-	peak->oldmin.z = peak->newmin.z;
+	s_sample_buf[s_sample_idx] = *sample;
+	s_sample_idx = (uint8_t)((s_sample_idx + 1U) % SAMPLE_SIZE);
+	if (s_sample_cnt < SAMPLE_SIZE)
+	{
+		s_sample_cnt++;
+	}
 }
 
-void slid_update(slid_reg_t *slid, axis_info_t *cur_sample)
+// 动态阈值：在最近 s_sample_cnt 个采样点上取最大/最小值
+static void peak_update(peak_value_t *peak)
 {
-	filter_avg_t filter;
-	filter_calculate(&filter, cur_sample);
-	cur_sample->x = cur_sample->x;
-	cur_sample->y = cur_sample->y;
-	cur_sample->z = cur_sample->z;
-	
-	if (ABS((cur_sample->x - slid->new_sample.x)) > DYNAMIC_PRECISION) {
+	uint8_t i;
+
+	peak->newmax.x = -32768;
+	peak->newmax.y = -32768;
+	peak->newmax.z = -32768;
+
+	peak->newmin.x = 32767;
+	peak->newmin.y = 32767;
+	peak->newmin.z = 32767;
+
+	for (i = 0; i < s_sample_cnt; i++)
+	{
+		const axis_info_t *s = &s_sample_buf[i];
+
+		peak->newmax.x = MAX(peak->newmax.x, s->x);
+		peak->newmax.y = MAX(peak->newmax.y, s->y);
+		peak->newmax.z = MAX(peak->newmax.z, s->z);
+
+		peak->newmin.x = MIN(peak->newmin.x, s->x);
+		peak->newmin.y = MIN(peak->newmin.y, s->y);
+		peak->newmin.z = MIN(peak->newmin.z, s->z);
+	}
+
+	peak->oldmax = peak->newmax;
+	peak->oldmin = peak->newmin;
+}
+
+// 线性移位寄存器，过滤高频抖动后用于过阈值判断
+static void slid_update(slid_reg_t *slid, const axis_info_t *cur_sample)
+{
+	if (ABS(cur_sample->x - slid->new_sample.x) > DYNAMIC_PRECISION) {
 		slid->old_sample.x = slid->new_sample.x;
 		slid->new_sample.x = cur_sample->x;
 	} else {
 		slid->old_sample.x = slid->new_sample.x;
 	}
-	if (ABS((cur_sample->y - slid->new_sample.y)) > DYNAMIC_PRECISION) {
+	if (ABS(cur_sample->y - slid->new_sample.y) > DYNAMIC_PRECISION) {
 		slid->old_sample.y = slid->new_sample.y;
 		slid->new_sample.y = cur_sample->y;
 	} else {
 		slid->old_sample.y = slid->new_sample.y;
 	}
-	
-	if (ABS((cur_sample->z - slid->new_sample.z)) > DYNAMIC_PRECISION) {
+
+	if (ABS(cur_sample->z - slid->new_sample.z) > DYNAMIC_PRECISION) {
 		slid->old_sample.z = slid->new_sample.z;
 		slid->new_sample.z = cur_sample->z;
 	} else {
 		slid->old_sample.z = slid->new_sample.z;
 	}
 }
- 
-char is_most_active(peak_value_t *peak)
+
+// 判断哪根轴的上下摆幅最大，作为计步判定轴
+static char is_most_active(peak_value_t *peak)
 {
 	char res;
 	short x_change;
 	short y_change;
 	short z_change;
-	axis_info_t cur_sample;
-	peak_update(peak,&cur_sample);
+
+	peak_update(peak);
 	res = MOST_ACTIVE_NULL;
-	
-	x_change = ABS((peak->newmax.x - peak->newmin.x));
-	y_change = ABS((peak->newmax.y - peak->newmin.y));
-	z_change = ABS((peak->newmax.z - peak->newmin.z));
-	
+
+	x_change = ABS(peak->newmax.x - peak->newmin.x);
+	y_change = ABS(peak->newmax.y - peak->newmin.y);
+	z_change = ABS(peak->newmax.z - peak->newmin.z);
+
 	if (x_change > y_change && x_change > z_change && x_change >= ACTIVE_PRECISION) {
 		res = MOST_ACTIVE_X;
 	} else if (y_change > x_change && y_change > z_change && y_change >= ACTIVE_PRECISION) {
@@ -170,48 +176,48 @@ char is_most_active(peak_value_t *peak)
 	}
 	return res;
 }
- 
-/*判断是否走步*/
-int8_t detect_step(peak_value_t *peak, slid_reg_t *slid, axis_info_t *cur_sample)
+
+/* 判断是否走步：每调用一次只采一个样，历史样本来自环形缓冲 */
+uint16_t detect_step(peak_value_t *peak, slid_reg_t *slid, axis_info_t *cur_sample)
 {
-	static int8_t step_cnt = 0;
-//	uint32_t step_interval;
-//	filter_avg_t filter;
+	static uint16_t step_cnt = 0;
+	filter_avg_t filter;
 	char res;
+
+	filter_calculate(&filter, cur_sample);
+	sample_buf_push(cur_sample);
+
 	res = is_most_active(peak);
 	slid_update(slid, cur_sample);
-	
+
 	switch (res) {
-		case MOST_ACTIVE_NULL: {
-			//fix
-			break;
-		}
 		case MOST_ACTIVE_X: {
 			short threshold_x = (peak->oldmax.x + peak->oldmin.x) / 2;
 			if (slid->old_sample.x > threshold_x && slid->new_sample.x < threshold_x)
 			{
-				step_cnt ++;
+				step_cnt++;
 			}
 			break;
 		}
 		case MOST_ACTIVE_Y: {
 			short threshold_y = (peak->oldmax.y + peak->oldmin.y) / 2;
-			if (slid->old_sample.y > threshold_y && slid->new_sample.y < threshold_y) 
-				{
-					step_cnt ++;
-				}
+			if (slid->old_sample.y > threshold_y && slid->new_sample.y < threshold_y)
+			{
+				step_cnt++;
+			}
 			break;
 		}
 		case MOST_ACTIVE_Z: {
 			short threshold_z = (peak->oldmax.z + peak->oldmin.z) / 2;
-			if (slid->old_sample.z > threshold_z && slid->new_sample.z < threshold_z) 
-				{
-					step_cnt ++;
-				}
+			if (slid->old_sample.z > threshold_z && slid->new_sample.z < threshold_z)
+			{
+				step_cnt++;
+			}
 			break;
 		}
-		default: 
+		default:
 			break;
 	}
+
 	return step_cnt;
 }

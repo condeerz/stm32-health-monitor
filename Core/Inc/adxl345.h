@@ -6,7 +6,7 @@
 extern I2C_HandleTypeDef hi2c2;
 
 // ==================== ADXL345 I2C地址（SDO接地=0x53，接VCC=0x1D） ====================
-#define ADXL345_ADDR 0x53 << 1  // I2C设备地址（7位地址左移1位，HAL库要求）
+#define ADXL345_ADDR (0x53 << 1)  // I2C设备地址（7位地址左移1位，HAL库要求）
 
 // ==================== ADXL345寄存器地址 ====================
 #define DEVID        0x00    // 设备ID（固定0xE5）
@@ -28,7 +28,7 @@ extern I2C_HandleTypeDef hi2c2;
 #define SAMPLE_SIZE         50
  
  
-#define ABS(a) (0 - (a)) > 0 ? (-(a)) : (a)
+#define ABS(a) (((a) < 0) ? -(a) : (a))
 #define DYNAMIC_PRECISION     			30   	 /*动态精度*/
  
 #define MOST_ACTIVE_NULL      			0      	 /*未找到最活跃轴*/
@@ -70,6 +70,6 @@ HAL_StatusTypeDef ADXL345_WriteReg(I2C_HandleTypeDef *hi2c, uint8_t reg, uint8_t
 HAL_StatusTypeDef ADXL345_ReadReg(I2C_HandleTypeDef *hi2c, uint8_t reg, uint8_t *data);   // 读单个寄存器
 HAL_StatusTypeDef ADXL345_ReadRegs(I2C_HandleTypeDef *hi2c, uint8_t reg, uint8_t *buf, uint8_t len);  // 读多个寄存器
 HAL_StatusTypeDef ADXL345_ReadAccel(I2C_HandleTypeDef *hi2c, short *ax, short *ay, short *az);  // 读取三轴加速度（g）
-int8_t detect_step(peak_value_t *peak, slid_reg_t *slid, axis_info_t *cur_sample);
+uint16_t detect_step(peak_value_t *peak, slid_reg_t *slid, axis_info_t *cur_sample);
 
 #endif

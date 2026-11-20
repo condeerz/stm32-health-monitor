@@ -77,6 +77,10 @@ void blood_data_translate(void)
 {	
 	float n_denom;
 	uint16_t i;
+	int s1_max_index;
+	uint16_t Heart_Rate;
+	float R;
+	float sp02_num;
 
 	//直流滤波
 	float dc_red =0; 
@@ -127,7 +131,7 @@ void blood_data_translate(void)
 	for(i = 0;i < FFT_N;i++) 
 	{
 		s1[i].real=sqrtf(s1[i].real*s1[i].real+s1[i].imag*s1[i].imag);
-		s1[i].real=sqrtf(s2[i].real*s2[i].real+s2[i].imag*s2[i].imag);
+		s2[i].real=sqrtf(s2[i].real*s2[i].real+s2[i].imag*s2[i].imag);
 	}
 	//计算交流分量
 	for (i=1 ; i<FFT_N ; i++ ) 
@@ -142,29 +146,36 @@ void blood_data_translate(void)
 			break;
 	}
 	
-	//读取峰值点的横坐标  结果的物理意义为 
-	int s1_max_index = find_max_num_index(s1, 60);
-	int s2_max_index = find_max_num_index(s2, 60);
-
-	//检查HbO2和Hb的变化频率是否一致
-	if(i>=45)
-	{
-		//心率计算
-		uint16_t Heart_Rate = 60.00 * SAMPLES_PER_SECOND * s1_max_index / FFT_N;
-		heart = Heart_Rate;
-		
-		//血氧含量计算
-		float R = (ac_ir*dc_red)/(ac_red*dc_ir);
-		float sp02_num = -45.060*R*R+ 30.354 *R + 94.845;
-		SpO2 = sp02_num;
-		
-		//状态正常
-	}
-	else //数据发生异常
+	// 信号有效性检查：无手指或信号过弱时直流/交流分量会退化成 0，直接判无效
+	if (i < 45 || dc_red <= 0.0f || dc_ir <= 0.0f || ac_red <= 0.0f || ac_ir <= 0.0f)
 	{
 		heart = 0;
 		SpO2 = 0;
+		return;
 	}
+
+	// 在低频段内找幅值最大的谱线序号
+	s1_max_index = find_max_num_index(s1, 60);
+
+	// 心率 = 60 * 采样率 * 峰值谱线序号 / FFT 点数
+	Heart_Rate = (uint16_t)(60.00 * SAMPLES_PER_SECOND * s1_max_index / FFT_N);
+	if (Heart_Rate < 30 || Heart_Rate > 220)
+	{
+		// 超出人体心率范围，按无效数据处理
+		heart = 0;
+		SpO2 = 0;
+		return;
+	}
+	heart = Heart_Rate;
+
+	// 血氧：R = (AC_red / DC_red) / (AC_ir / DC_ir)
+	R = (ac_red * dc_ir) / (dc_red * ac_ir);
+	sp02_num = -45.060f * R * R + 30.354f * R + 94.845f;
+
+	if (sp02_num > 99.99f) sp02_num = 99.99f;
+	if (sp02_num < 0.0f)   sp02_num = 0.0f;
+	SpO2 = sp02_num;
+
 	//结束变换显示
 }
 

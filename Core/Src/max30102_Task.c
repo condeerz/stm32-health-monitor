@@ -10,37 +10,43 @@ extern uint16_t g_fft_index;         	 	//fft输入输出下标
 extern int heart;		//定义心率
 extern float SpO2;		//定义血氧饱和度
 
-// max30102任务
+// max30102 任务：按 100 Hz 采样（10 ms 一个样本），偶发调度抖动时把 FIFO 里积压的样本一次取完
 void StartMAX30102Task(void *argument)
 {
-    uint8_t status;
+	uint8_t status;
+	uint8_t drain;
 
-    for (;;)
-    {
-        status = max30102_read_reg(REG_INTR_STATUS_1);
-        if (status & 0x40)
-        {
-            max30102_read_fifo();
+	for (;;)
+	{
+		/* FIFO 中可能有积压样本，最多补读 3 个，避免采集节拍与算法假设的采样率产生漂移 */
+		for (drain = 0; drain < 3; drain++)
+		{
+			status = max30102_read_reg(REG_INTR_STATUS_1);
+			if ((status & 0x40) == 0)
+			{
+				break;
+			}
 
-            s1[g_fft_index].real = fifo_red;
-            s1[g_fft_index].imag = 0;
-            s2[g_fft_index].real = fifo_ir;
-            s2[g_fft_index].imag = 0;
+			max30102_read_fifo();
 
-            g_fft_index++;
+			s1[g_fft_index].real = fifo_red;
+			s1[g_fft_index].imag = 0;
+			s2[g_fft_index].real = fifo_ir;
+			s2[g_fft_index].imag = 0;
+			g_fft_index++;
 
-            if (g_fft_index >= FFT_N)
-            {
-                blood_data_translate();
+			if (g_fft_index >= FFT_N)
+			{
+				blood_data_translate();
 
-                osMutexAcquire(healthMutexHandle, osWaitForever);
-                g_health.heart = heart;
-                g_health.spo2  = SpO2;
-                osMutexRelease(healthMutexHandle);
+				osMutexAcquire(healthMutexHandle, osWaitForever);
+				g_health.heart = heart;
+				g_health.spo2  = SpO2;
+				osMutexRelease(healthMutexHandle);
 
-                g_fft_index = 0;
-            }
-        }
-        osDelay(20);
-    }
+				g_fft_index = 0;
+			}
+		}
+		osDelay(10);
+	}
 }

@@ -1,8 +1,11 @@
-/*
- * oled.c
- *
- *  Created on: 2022年7月24日
- *      Author: Unicorn_Li
+/**
+ * ************************************************************************
+ * 
+ * @file oled.c
+ * @author 徐煜果
+ * @brief SSD1306 OLED 驱动（I2C，页地址模式）
+ * 
+ * ************************************************************************
  */
 #include "oled.h"
 
@@ -16,11 +19,7 @@ uint8_t CMD_Data[]={
 
 0xAF};
 
-/**
- * @function: void OLED_Init(void)
- * @description: OLED初始化
- * @return {*}
- */
+/* OLED 初始化：上电延时 200 ms，再按 SSD1306 手册顺序写 23 条命令 */
 void OLED_Init(void)
 {
 	HAL_Delay(200);
@@ -33,34 +32,19 @@ void OLED_Init(void)
 	
 }
 
-/**
- * @function: void OLED_WR_CMD(uint8_t cmd)
- * @description: 向设备写控制命令
- * @param {uint8_t} cmd 芯片手册规定的命令
- * @return {*}
- */
+/* 写命令：控制字节 0x00 表示后面跟的是命令 */
 void OLED_WR_CMD(uint8_t cmd)
 {
 	HAL_I2C_Mem_Write(&hi2c1 ,I2C_DEV_ADDR,0x00,I2C_MEMADD_SIZE_8BIT,&cmd,1,0x100);
 }
 
-/**
- * @function: void OLED_WR_DATA(uint8_t data)
- * @description: 向设备写控制数据
- * @param {uint8_t} data 数据
- * @return {*}
- */
+/* 写数据：控制字节 0x40 表示后面跟的是显存数据 */
 void OLED_WR_DATA(uint8_t data)
 {
 	HAL_I2C_Mem_Write(&hi2c1 ,I2C_DEV_ADDR,0x40,I2C_MEMADD_SIZE_8BIT,&data,1,0x100);
 }
 
-/**
- * @function: void OLED_On(void)
- * @description: 更新显示
-
- * @return {*}
- */
+/* 全屏点亮，调试时用来看 OLED 是否正常工作 */
 void OLED_On(void)
 {
 	uint8_t i,n;
@@ -75,11 +59,7 @@ void OLED_On(void)
 }
 
 
-/**
- * @function: OLED_Clear(void)
- * @description: 清屏,整个屏幕是黑色的!和没点亮一样!!!
- * @return {*}
- */
+/* 清屏：8 页 × 128 列全写 0，屏幕看起来和没点亮一样 */
 void OLED_Clear(void)
 {
 	uint8_t i,n;
@@ -93,37 +73,24 @@ void OLED_Clear(void)
 	}
 }
 
-/**
- * @function: void OLED_Display_On(void)
- * @description: 开启OLED显示
- * @return {*}
- */
+/* 开显示：先开电荷泵，再打开面板 */
 void OLED_Display_On(void)
 {
-	OLED_WR_CMD(0X8D);  //SET DCDC命令
-	OLED_WR_CMD(0X14);  //DCDC ON
-	OLED_WR_CMD(0XAF);  //DISPLAY ON,打开显示
+	OLED_WR_CMD(0X8D);  // 电荷泵设置
+	OLED_WR_CMD(0X14);  // 开电荷泵
+	OLED_WR_CMD(0XAF);  // 开面板
 }
 
 
-/**
- * @function: void OLED_Display_Off(void)
- * @description: 关闭OLED显示
- * @return {*}
- */
+/* 关显示：先关电荷泵，再关面板 */
 void OLED_Display_Off(void)
 {
-	OLED_WR_CMD(0X8D);  //SET DCDC命令
-	OLED_WR_CMD(0X10);  //DCDC OFF
-	OLED_WR_CMD(0XAE);  //DISPLAY OFF，关闭显示
+	OLED_WR_CMD(0X8D);  // 电荷泵设置
+	OLED_WR_CMD(0X10);  // 关电荷泵
+	OLED_WR_CMD(0XAE);  // 关面板
 }
 
-/**
- * @function: void OLED_Set_Pos(uint8_t x, uint8_t y)
- * @description: 坐标设置
- * @param {uint8_t} x,y
- * @return {*}
- */
+/* 设置页地址和列地址；y 是页号 0~7，不是像素行 */
 void OLED_Set_Pos(uint8_t x, uint8_t y)
 {
 	OLED_WR_CMD(0xb0+y);	//设置页地址（0~7）
@@ -132,12 +99,7 @@ void OLED_Set_Pos(uint8_t x, uint8_t y)
 }
 
 
-/**
- * @function: unsigned int oled_pow(uint8_t m,uint8_t n)
- * @description: m^n函数
- * @param {uint8_t} m,n
- * @return {unsigned int} result
- */
+/* 整数幂：OLED_ShowNum/Showdecimal 拆十进制位时用 */
 unsigned int oled_pow(uint8_t m,uint8_t n)
 {
 	unsigned int result=1;
@@ -145,20 +107,11 @@ unsigned int oled_pow(uint8_t m,uint8_t n)
 	return result;
 }
 
-/**
- * @function: void OLED_ShowChar(uint8_t x, uint8_t y, uint8_t chr, uint8_t Char_Size,uint8_t Color_Turn)
- * @description: 在OLED12864特定位置开始显示一个字符
- * @param {uint8_t} x字符开始显示的横坐标
- * @param {uint8_t} y字符开始显示的纵坐标
- * @param {uint8_t} chr待显示的字符
- * @param {uint8_t} Char_Size待显示字符的字体大小,选择字体 16/12
- * @param {uint8_t} Color_Turn是否反相显示(1反相、0不反相)
- * @return {*}
- */
+/* 显示一个 ASCII 字符：12 号字取 F6x8，16 号字取 F8X16；Color_Turn=1 时取反 */
 void OLED_ShowChar(uint8_t x,uint8_t y,uint8_t chr,uint8_t Char_Size,uint8_t Color_Turn)
 {
 	unsigned char c=0,i=0;
-		c=chr-' ';//得到偏移后的值
+		c=chr-' ';// 字模从空格开始，减掉空格偏移
 		if(x>128-1){x=0;y=y+2;}
 		if(Char_Size ==16)
 		{
@@ -193,16 +146,7 @@ void OLED_ShowChar(uint8_t x,uint8_t y,uint8_t chr,uint8_t Char_Size,uint8_t Col
 		  }
 }
 
-/**
- * @function: void OLED_ShowString(uint8_t x, uint8_t y, uint8_t *chr, uint8_tChar_Size, uint8_t Color_Turn)
- * @description: 在OLED12864特定位置开始显示字符串
- * @param {uint8_t} x待显示字符串的开始横坐标x:0~127
- * @param {uint8_t} y待显示字符串的开始纵坐标 y:0~7，若选择字体大小为16，则两行数字之间需要间隔2，若选择字体大小为12，间隔1
- * @param {uint8_t} *chr待显示的字符串
- * @param {uint8_t} Char_Size待显示字符串的字体大小,选择字体 16/12，16为8X16，12为6x8
- * @param {uint8_t} Color_Turn是否反相显示(1反相、0不反相)
- * @return {*}
- */
+/* 显示字符串：按字体宽度往后排，一行放不下自动换行 */
 void OLED_ShowString(uint8_t x,uint8_t y,char*chr,uint8_t Char_Size, uint8_t Color_Turn)
 {
 	uint8_t  j=0;
@@ -213,12 +157,12 @@ void OLED_ShowString(uint8_t x,uint8_t y,char*chr,uint8_t Char_Size, uint8_t Col
 			else  //8X16的字体列加8，显示下一个字符
 				x += 8;
 
-			if (x > 122 && Char_Size==12) //TextSize6x8如果一行不够显示了，从下一行继续显示
+			if (x > 122 && Char_Size==12) // 12 号字一行放不下，换到下一行
 			{
 				x = 0;
 				y++;
 			}
-			if (x > 120 && Char_Size== 16) //TextSize8x16如果一行不够显示了，从下一行继续显示
+			if (x > 120 && Char_Size== 16) // 16 号字一行放不下，换到下一行
 			{
 				x = 0;
 				y++;
@@ -227,17 +171,7 @@ void OLED_ShowString(uint8_t x,uint8_t y,char*chr,uint8_t Char_Size, uint8_t Col
 	}
 }
 
-/**
- * @function: void OLED_ShowNum(uint8_t x,uint8_t y,unsigned int num,uint8_t len,uint8_t size2, Color_Turn)
- * @description: 显示数字
- * @param {uint8_t} x待显示的数字起始横坐标,x:0~126
- * @param {uint8_t} y待显示的数字起始纵坐标, y:0~7，若选择字体大小为16，则两行数字之间需要间隔2，若选择字体大小为12，间隔1
- * @param {unsigned int} num:输入的数据
- * @param {uint8_t } len:输入的数据位数
- * @param {uint8_t} size2:输入的数据大小，选择 16/12，16为8X16，12为6x8
- * @param {uint8_t} Color_Turn是否反相显示(1反相、0不反相)
- * @return {*}
- */
+/* 显示定长整数；前面的 0 用空格顶掉 */
 void OLED_ShowNum(uint8_t x,uint8_t y,unsigned int num,uint8_t len,uint8_t size2, uint8_t Color_Turn)
 {
 	uint8_t t,temp;
@@ -259,18 +193,7 @@ void OLED_ShowNum(uint8_t x,uint8_t y,unsigned int num,uint8_t len,uint8_t size2
 }
 
 
-/**
- * @function: void OLED_Showdecimal(uint8_t x,uint8_t y,float num,uint8_t z_len,uint8_t f_len,uint8_t size2, uint8_t Color_Turn)
- * @description: 显示正负浮点数
- * @param {uint8_t} x待显示的数字起始横坐标,x:0~126
- * @param {uint8_t} y待显示的数字起始纵坐标, y:0~7，若选择字体大小为16，则两行数字之间需要间隔2，若选择字体大小为12，间隔1
- * @param {float} num:输入的浮点型数据
- * @param {uint8_t } z_ len:整数部分的位数
- * @param {uint8_t } f_len: 小数部分的位数
- * @param {uint8_t} size2:输入的数据大小，选择 16/12，16为8X16，12为6x8
- * @param {uint8_t} Color_Turn是否反相显示(1反相、0不反相)
- * @return {*}
- */
+/* 显示带符号浮点数：整数 + 小数点 + 小数，负号最后补在最前面 */
 void OLED_Showdecimal(uint8_t x,uint8_t y,float num,uint8_t z_len,uint8_t f_len,uint8_t size2, uint8_t Color_Turn)
 {
 	uint8_t t,temp,i=0;//i为负数标志位
@@ -309,7 +232,7 @@ void OLED_Showdecimal(uint8_t x,uint8_t y,float num,uint8_t z_len,uint8_t f_len,
 		temp=(f_temp/oled_pow(10,f_len-t-1))%10;
 		OLED_ShowChar(x+(size2/2)*(t+z_len)+5,y,temp+'0',size2, Color_Turn);
 	}
-	if(i==1)//如果为负，就将最前的一位赋值‘-’
+	if(i==1)// 负数：最后在最前面补 '-'
 	{
 		OLED_ShowChar(x,y,'-',size2, Color_Turn);
 		i=0;
@@ -318,15 +241,7 @@ void OLED_Showdecimal(uint8_t x,uint8_t y,float num,uint8_t z_len,uint8_t f_len,
 
 
 
-/**
- * @function: void OLED_ShowCHinese(uint8_t x,uint8_t y,uint8_t no, uint8_t Color_Turn)
- * @description: 在OLED特定位置开始显示16X16汉字
- * @param {uint8_t} x待显示的汉字起始横坐标x: 0~112，两列汉字之间需要间隔16
- * @param {uint8_t} y待显示的汉字起始纵坐标 y: 0~6 , 两行汉字之间需要间隔2
- * @param {uint8_t} no待显示的汉字编号
- * @param {uint8_t} Color_Turn是否反相显示(1反相、0不反相)
- * @return {*}
- */
+/* 显示 16×16 汉字：每个汉字占 2 页，字模从 Hzk 取 */
 void OLED_ShowCHinese(uint8_t x,uint8_t y,uint8_t no, uint8_t Color_Turn)
 {
 	uint8_t t=0;
@@ -334,33 +249,23 @@ void OLED_ShowCHinese(uint8_t x,uint8_t y,uint8_t no, uint8_t Color_Turn)
     for(t=0;t<16;t++)
 		{
 				if (Color_Turn)
-					OLED_WR_DATA(~Hzk[2*no][t]); //显示汉字的上半部分
+					OLED_WR_DATA(~Hzk[2*no][t]); // 上半部分
 				else
-					OLED_WR_DATA(Hzk[2*no][t]); //显示汉字的上半部分
+					OLED_WR_DATA(Hzk[2*no][t]); // 上半部分
         }
 
 		OLED_Set_Pos(x,y+1);
     for(t=0;t<16;t++)
 		{
 				if (Color_Turn)
-					OLED_WR_DATA(~Hzk[2*no+1][t]); //显示汉字的上半部分
+					OLED_WR_DATA(~Hzk[2*no+1][t]); // 下半部分
 				else
-					OLED_WR_DATA(Hzk[2*no+1][t]);//显示汉字的上半部分
+					OLED_WR_DATA(Hzk[2*no+1][t]);// 下半部分
 
          }
 }
 
-/**
- * @function: void OLED_DrawBMP(uint8_t x0, uint8_t y0, uint8_t x1, uint8_t y1, uint8_t *  BMP,uint8_t Color_Turn)
- * @description: 在OLED特定区域显示BMP图片
- * @param {uint8_t} x0图像开始显示横坐标  x0:0~127
- * @param {uint8_t} y0图像开始显示纵坐标  y0:0~7
- * @param {uint8_t} x1图像结束显示横坐标  x1:1~128
- * @param {uint8_t} y1图像结束显示纵坐标  y1:1~8
- * @param {uint8_t} *BMP待显示的图像数据
- * @param {uint8_t} Color_Turn是否反相显示(1反相、0不反相)
- * @return {*}
- */
+/* 显示 BMP 点阵：y0/y1 是页号，按页写入 */
 void OLED_DrawBMP(uint8_t x0, uint8_t y0, uint8_t x1, uint8_t y1, uint8_t *  BMP,uint8_t Color_Turn)
 {
    uint32_t j = 0;
@@ -385,12 +290,7 @@ void OLED_DrawBMP(uint8_t x0, uint8_t y0, uint8_t x1, uint8_t y1, uint8_t *  BMP
 }
 
 
-/**
- * @function: void OLED_HorizontalShift(uint8_t direction)
- * @description: 屏幕内容水平全屏滚动播放
- * @param {uint8_t} direction			LEFT	   0x27     	RIGHT  0x26
- * @return {*}
- */
+/* 全屏水平滚动：0x26 向右，0x27 向左，0x2f 开滚动 */
 void OLED_HorizontalShift(uint8_t direction)
 
 {
@@ -406,14 +306,7 @@ void OLED_HorizontalShift(uint8_t direction)
 	OLED_WR_CMD(0x2f);//开启滚动-0x2f，禁用滚动-0x2e，禁用需要重写数据
 }
 
-/**
- * @function: void OLED_Some_HorizontalShift(uint8_t direction,uint8_t start,uint8_t end)
- * @description: 屏幕部分内容水平滚动播放
- * @param {uint8_t} direction			LEFT	   0x27     	RIGHT  0x26
- * @param {uint8_t} start 开始页地址  0x00~0x07
- * @param {uint8_t} end  结束页地址  0x01~0x07
- * @return {*}
- */
+/* 指定页区间水平滚动：start/end 是页地址 */
 void OLED_Some_HorizontalShift(uint8_t direction,uint8_t start,uint8_t end)
 {
 	OLED_WR_CMD(0x2e);//停止滚动
@@ -428,13 +321,7 @@ void OLED_Some_HorizontalShift(uint8_t direction,uint8_t start,uint8_t end)
 
 }
 
-/**
- * @function: void OLED_VerticalAndHorizontalShift(uint8_t direction)
- * @description: 屏幕内容垂直水平全屏滚动播放
- * @param {uint8_t} direction				右上滚动	 0x29
- *                                                            左上滚动   0x2A
- * @return {*}
- */
+/* 垂直 + 水平滚动：0x29 右上，0x2A 左上 */
 void OLED_VerticalAndHorizontalShift(uint8_t direction)
 {
 	OLED_WR_CMD(0x2e);//停止滚动
@@ -449,24 +336,13 @@ void OLED_VerticalAndHorizontalShift(uint8_t direction)
 	OLED_WR_CMD(0x2f);//开启滚动-0x2f，禁用滚动-0x2e，禁用需要重写数据
 }
 
-/**
- * @function: void OLED_DisplayMode(uint8_t mode)
- * @description: 屏幕内容取反显示
- * @param {uint8_t} direction			ON	0xA7  ，
- *                                                          OFF	0xA6	默认此模式，设置像素点亮
- * @return {*}
- */
+/* 反显/正常显示：0xA7 反显，0xA6 正常 */
 void OLED_DisplayMode(uint8_t mode)
 {
 	OLED_WR_CMD(mode);
 }
 
-/**
- * @function: void OLED_IntensityControl(uint8_t intensity)
- * @description: 屏幕亮度调节
- * @param  {uint8_t} intensity	0x00~0xFF,RESET=0x7F
- * @return {*}
- */
+/* 亮度调节：先写 0x81，再写 0x00~0xFF，复位值 0x7F */
 void OLED_IntensityControl(uint8_t intensity)
 {
 	OLED_WR_CMD(0x81);

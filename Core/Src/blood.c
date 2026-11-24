@@ -2,11 +2,9 @@
  * ************************************************************************
  * 
  * @file blood.c
- * @author zxr
- * @brief 
+ * @author 徐煜果
+ * @brief 心率/血氧计算实现
  * 
- * ************************************************************************
- * @copyright Copyright (c) 2024 zxr 
  * ************************************************************************
  */
 #include "blood.h"
@@ -15,30 +13,23 @@
 #include <stdio.h>
 #include <string.h>
 
-int heart;		//定义心率
-float SpO2;		//定义血氧饱和度
+int heart;		// 心率（bpm），0 表示无效
+float SpO2;		// 血氧饱和度（%），0 表示无效
 
-//调用外部变量
-extern uint16_t fifo_red;		//定义FIFO中的红光数据
-extern uint16_t fifo_ir;		//定义FIFO中的红外光数据
+// MAX30102 驱动里的 FIFO 原始值
+extern uint16_t fifo_red;		// 红光原始值
+extern uint16_t fifo_ir;		// 红外原始值
 
-uint16_t g_fft_index = 0;         	 	//fft输入输出下标
-struct compx s1[FFT_N+16];           	//FFT输入和输出：从S[1]开始存放，根据大小自己定义
-struct compx s2[FFT_N+16];           	//FFT输入和输出：从S[1]开始存放，根据大小自己定义
+uint16_t g_fft_index = 0;         	 	// FFT 输入数组的下标
+struct compx s1[FFT_N+16];           	// FFT 输入/输出共用数组；实部存采样值，虚部先清零
+struct compx s2[FFT_N+16];           	// FFT 输入/输出共用数组；实部存采样值，虚部先清零
 
-#define CORRECTED_VALUE			47   			//标定血液氧气含量
+#define CORRECTED_VALUE			47   			// 血氧公式系数
 
-/**
- * ************************************************************************
- * @brief 更新血氧数据
- * @note 从 MAX30102 的 FIFO 中读取红光和红外数据，并将它们存储到两个复数数组s1和s2中,
- * 		 这些数据随后可以用于进行傅里叶变换等后续处理
- * 
- * ************************************************************************
- */
+/* 把 MAX30102 FIFO 里的红光/红外原始值搬进 FFT 输入数组 */
 void blood_data_update(void)
 {
-	//标志位被使能时 读取FIFO
+	// 等 FIFO 里有新数据再读
 	g_fft_index=0;
 	
 	uint8_t status = max30102_read_reg(REG_INTR_STATUS_1);
@@ -48,13 +39,12 @@ void blood_data_update(void)
 
 		if ((status & 0x40))
 		{
-			//读取FIFO
-			max30102_read_fifo();  //read from MAX30102 FIFO
+			// 读一次 FIFO
+			max30102_read_fifo();  // 原始值在驱动里拼好
 			
-			//将数据写入fft输入并清除输出
 			if(g_fft_index < FFT_N)
 			{
-				//将数据写入fft输入并清除输出
+				// 实部存原始值，虚部清零
 				s1[g_fft_index].real = fifo_red;
 				s1[g_fft_index].imag= 0;
 				s2[g_fft_index].real = fifo_ir;
@@ -66,13 +56,7 @@ void blood_data_update(void)
 }
 
 
-/**
- * ************************************************************************
- * @brief 血液信息转换
- * 
- * 
- * ************************************************************************
- */
+/* 去直流 -> 平滑 -> FFT -> 找峰 -> 算心率和 SpO2 */
 void blood_data_translate(void)
 {	
 	float n_denom;
@@ -82,7 +66,7 @@ void blood_data_translate(void)
 	float R;
 	float sp02_num;
 
-	//直流滤波
+	// 去直流：先求均值，再逐点减掉
 	float dc_red =0; 
 	float dc_ir =0;
 	float ac_red =0; 
@@ -101,7 +85,7 @@ void blood_data_translate(void)
 		s2[i].real =  s2[i].real - dc_ir ; 
 	}
 
-	//移动平均滤波
+	// 三点滑动平均
 	for(i = 1;i < FFT_N-1;i++) 
 	{
 		n_denom= ( s1[i-1].real + 2*s1[i].real + s1[i+1].real);
@@ -111,7 +95,7 @@ void blood_data_translate(void)
 		s2[i].real=  n_denom/4.00; 			
 	}
 
-	//八点平均滤波
+	// 八点滑动平均，再平滑一次
 	for(i = 0;i < FFT_N-8;i++) 
 	{
 		n_denom= ( s1[i].real+s1[i+1].real+ s1[i+2].real+ s1[i+3].real+ s1[i+4].real+ s1[i+5].real+ s1[i+6].real+ s1[i+7].real);
@@ -122,9 +106,9 @@ void blood_data_translate(void)
 		
 	}
 
-	//开始变换显示	
+	// 开始 FFT	
 	g_fft_index = 0;	
-	//快速傅里叶变换
+	// 两路分别做 FFT
 	FFT(s1);
 	FFT(s2);
 	
@@ -133,7 +117,7 @@ void blood_data_translate(void)
 		s1[i].real=sqrtf(s1[i].real*s1[i].real+s1[i].imag*s1[i].imag);
 		s2[i].real=sqrtf(s2[i].real*s2[i].real+s2[i].imag*s2[i].imag);
 	}
-	//计算交流分量
+	// 交流分量 = 各次谐波幅值之和（跳过直流）
 	for (i=1 ; i<FFT_N ; i++ ) 
 	{
 		ac_red += s1[i].real ;
@@ -176,21 +160,15 @@ void blood_data_translate(void)
 	if (sp02_num < 0.0f)   sp02_num = 0.0f;
 	SpO2 = sp02_num;
 
-	//结束变换显示
+	
 }
 
-/**
- * ************************************************************************
- * @brief 心率血氧循环函数
- * 
- * 
- * ************************************************************************
- */
+/* 采集一帧并解算，结果写到全局 heart/SpO2 */
 void blood_Loop(void)
 {
-	//血液信息获取
+	// 先采集
 	blood_data_update();
-	//血液信息转换
+	// 再解算
 	blood_data_translate();
 
 	SpO2 = (SpO2 > 99.99) ? 99.99:SpO2;  

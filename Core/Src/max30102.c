@@ -1,29 +1,18 @@
 /**
  * ************************************************************************
  * 
- * @file MAX30102.c
- * @author zxr
- * @brief 
+ * @file max30102.c
+ * @author 徐煜果
+ * @brief MAX30102 驱动实现
  * 
- * ************************************************************************
- * @copyright Copyright (c) 2024 zxr 
  * ************************************************************************
  */
 #include "MAX30102.h"
 
-uint16_t fifo_red;  //定义FIFO中的红光数据
-uint16_t fifo_ir;   //定义FIFO中的红外光数据
+uint16_t fifo_red;  // FIFO 红光原始值
+uint16_t fifo_ir;   // FIFO 红外原始值
 
-/**
- * ************************************************************************
- * @brief 向MAX30102寄存器写入一个值
- * 
- * @param[in] addr  寄存器地址
- * @param[in] data  传输数据
- * 
- * @return 
- * ************************************************************************
- */
+/* 写寄存器：HAL_I2C_Mem_Write 的 memAddress 就是寄存器地址 */
 uint8_t max30102_write_reg(uint8_t addr, uint8_t data)
 {
   HAL_I2C_Mem_Write(&hi2c1, MAX30102_Device_address,	addr,	1,	&data,1,HAL_MAX_DELAY);
@@ -31,15 +20,7 @@ uint8_t max30102_write_reg(uint8_t addr, uint8_t data)
 }
 
 
-/**
- * ************************************************************************
- * @brief 读取MAX30102寄存器的一个值
- * 
- * @param[in] addr  寄存器地址
- * 
- * @return 
- * ************************************************************************
- */
+/* 读寄存器 */
 uint8_t max30102_read_reg(uint8_t addr )
 {
   uint8_t data=0;
@@ -48,14 +29,7 @@ uint8_t max30102_read_reg(uint8_t addr )
 }
 
 
-/**
- * ************************************************************************
- * @brief MAX30102传感器复位
- * 
- * 
- * @return 
- * ************************************************************************
- */
+/* 软复位：MODE_CONFIG bit6 写 1，复位后要重新配置 */
 uint8_t Max30102_reset(void)
 {
 	if(max30102_write_reg(REG_MODE_CONFIG, 0x40))
@@ -64,34 +38,24 @@ uint8_t Max30102_reset(void)
         return 0;    
 }
 
-/**
- * ************************************************************************
- * @brief MAX30102传感器模式配置
- * 
- * 
- * ************************************************************************
- */
+/* 初始化：开 FIFO 满/PPG 就绪中断，SpO2 模式，50 Hz、400 us 脉宽，LED 约 10 mA */
 void MAX30102_Config(void)
 {
-	max30102_write_reg(REG_INTR_ENABLE_1,0xc0);//// INTR setting
-	max30102_write_reg(REG_INTR_ENABLE_2,0x00);//
-	max30102_write_reg(REG_FIFO_WR_PTR,0x00);//FIFO_WR_PTR[4:0]
-	max30102_write_reg(REG_OVF_COUNTER,0x00);//OVF_COUNTER[4:0]
-	max30102_write_reg(REG_FIFO_RD_PTR,0x00);//FIFO_RD_PTR[4:0]
+	max30102_write_reg(REG_INTR_ENABLE_1,0xc0);// 开 FIFO 满和 PPG 就绪中断
+	max30102_write_reg(REG_INTR_ENABLE_2,0x00);// 第二组中断不用
+	max30102_write_reg(REG_FIFO_WR_PTR,0x00);// 写指针清零
+	max30102_write_reg(REG_OVF_COUNTER,0x00);// 溢出计数清零
+	max30102_write_reg(REG_FIFO_RD_PTR,0x00);// 读指针清零
 	
-	max30102_write_reg(REG_FIFO_CONFIG,0x0f);//sample avg = 1, fifo rollover=false, fifo almost full = 17
-	max30102_write_reg(REG_MODE_CONFIG,0x03);//0x02 for Red only, 0x03 for SpO2 mode 0x07 multimode LED
-	max30102_write_reg(REG_SPO2_CONFIG,0x27);	// SPO2_ADC range = 4096nA, SPO2 sample rate (50 Hz), LED pulseWidth (400uS)  
-	max30102_write_reg(REG_LED1_PA,0x32);//Choose value for ~ 10mA for LED1
-	max30102_write_reg(REG_LED2_PA,0x32);// Choose value for ~ 10mA for LED2
-	max30102_write_reg(REG_PILOT_PA,0x7f);// Choose value for ~ 25mA for Pilot LED
+	max30102_write_reg(REG_FIFO_CONFIG,0x0f);// 不平均、FIFO 不覆盖、几乎满阈值 17
+	max30102_write_reg(REG_MODE_CONFIG,0x03);// SpO2 模式：红光 + 红外
+	max30102_write_reg(REG_SPO2_CONFIG,0x27);	// ADC 量程 4096 nA，采样率 50 Hz，脉宽 400 us  
+	max30102_write_reg(REG_LED1_PA,0x32);// LED1 电流约 10 mA
+	max30102_write_reg(REG_LED2_PA,0x32);// LED2 电流约 10 mA
+	max30102_write_reg(REG_PILOT_PA,0x7f);// Pilot LED 约 25 mA
 }
 
-/**
- * ************************************************************************
- * @brief 读取FIFO寄存器的数据
- * ************************************************************************
- */
+/* 读 6 字节 FIFO：红光/红外各 3 字节，拼成 18 位原始值 */
 void max30102_read_fifo(void)
 {
   uint16_t un_temp;
@@ -99,7 +63,7 @@ void max30102_read_fifo(void)
   fifo_ir=0;
   uint8_t ach_i2c_data[6];
   
-  //read and clear status register
+  // 读状态寄存器，清中断标志
   max30102_read_reg(REG_INTR_STATUS_1);
   max30102_read_reg(REG_INTR_STATUS_2);
   
@@ -107,6 +71,7 @@ void max30102_read_fifo(void)
 	
 	HAL_I2C_Mem_Read(&hi2c1,MAX30102_Device_address,REG_FIFO_DATA,1,ach_i2c_data,6,HAL_MAX_DELAY);
 	
+  // 三个字节拼 18 位：高 8 位左移 14，中 8 位左移 6，低 8 位右移 2
   un_temp=ach_i2c_data[0];
   un_temp<<=14;
   fifo_red+=un_temp;
@@ -127,6 +92,7 @@ void max30102_read_fifo(void)
 	un_temp>>=2;
   fifo_ir+=un_temp;
 	
+	// 无手指时原始值很小，直接清零，避免后级算出假心率
 	if(fifo_ir<=10000)
 	{
 		fifo_ir=0;
